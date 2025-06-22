@@ -956,4 +956,166 @@ import exchange.core2.collections.objpool.ObjectsPool;
 
 
 
+## Exchange Core 테스트 구조 분석
+
+### 📊 **테스트 카테고리 개요**
+
+Exchange Core의 테스트는 크게 4개 카테고리로 구분됩니다:
+
+1. **단위 테스트 (Unit Tests)** - 개별 컴포넌트 검증
+2. **통합 테스트 (Integration Tests)** - 전체 시스템 통합 검증  
+3. **성능 테스트 (Performance Tests)** - 비기능적 요구사항 검증
+4. **행동 기반 테스트 (BDD Tests)** - 비즈니스 시나리오 검증
+
+---
+
+### 🔧 **1. 단위 테스트 (Unit Tests)**
+
+#### **OrderBook 테스트** (`OrderBookBaseTest.java`)
+**검증하는 기능적 로직:**
+- **주문서 관리**: GTC, IOC, FOK 주문 타입별 처리 로직
+- **매칭 엔진**: 가격-시간 우선순위 매칭 알고리즘
+- **주문 상태 관리**: 주문 생성, 수정, 취소, 부분 체결
+- **시장 데이터**: L2 마켓 데이터 스냅샷 정확성
+
+**핵심 테스트 시나리오:**
+```java
+// 기본 주문 배치
+@Test shouldAddGtcOrders() - GTC 주문 추가 검증
+@Test shouldRemoveBidOrder()/shouldRemoveAskOrder() - 주문 취소 검증
+@Test shouldReduceBidOrder() - 부분 취소 검증
+@Test shouldMoveOrderExistingBucket() - 주문 가격 수정 검증
+
+// 매칭 로직 검증
+@Test shouldMatchIocOrderPartialBBO() - IOC 주문 부분 체결
+@Test shouldMatchFokBidOrderExactBudget() - FOK 주문 정확한 예산 매칭
+@Test shouldFullyMatchMarketableGtcOrder() - GTC 시장가 주문 완전 체결
+```
+
+#### **이벤트 처리 테스트** (`SimpleEventsProcessorTest.java`)
+**검증하는 기능적 로직:**
+- **이벤트 체인 처리**: 거래 이벤트들의 순차 처리
+- **명령 결과 변환**: OrderCommand → API 응답 변환
+- **다중 거래 처리**: 하나의 주문이 여러 상대방과 매칭되는 경우
+
+**핵심 테스트 시나리오:**
+```java
+@Test shouldHandleWithSingleTrade() - 단일 거래 이벤트 처리
+@Test shouldHandleWithTwoTrades() - 다중 거래 이벤트 체인 처리  
+@Test shouldHandleWithReduceCommand() - 주문 감소 이벤트 처리
+```
+
+---
+
+### 🚀 **2. 성능 테스트 (Performance Tests)**
+
+#### **지연시간 테스트** (`PerfLatency.java`)
+**검증하는 비기능적 로직:**
+- **초저지연**: 99.99% 지연시간 < 1ms 달성
+- **확장성**: 동시 사용자 수 증가에 따른 지연시간 변화
+- **처리 안정성**: 고부하 상황에서의 지연시간 일관성
+
+**테스트 규모별 분류:**
+```java
+@Test testLatencyMargin() 
+// 단순 조건: 1K 사용자, 1K 주문, 단일 심볼
+
+@Test testLatencyMultiSymbolMedium()
+// 중간 부하: 1M 사용자, 1M 주문, 10K 심볼, 1M+ msg/sec
+
+@Test testLatencyMultiSymbolLarge() 
+// 대용량: 3M 사용자, 3M 주문, 100K 심볼
+
+@Test testLatencyMultiSymbolHuge()
+// 초대용량: 10M 사용자, 30M 주문, 200K 심볼
+```
+
+#### **처리량 테스트** (`PerfThroughput.java`)
+**검증하는 비기능적 로직:**
+- **고성능 처리**: 초당 1M+ 메시지 처리 능력
+- **메모리 효율성**: 대용량 데이터 처리 시 메모리 사용량
+- **CPU 확장성**: 멀티코어 환경에서의 처리량 확장
+
+**성능 목표:**
+```java
+// "Triple Million" 능력 검증:
+// - 1M+ 활성 사용자
+// - 1M+ 대기 주문
+// - 1M+ 메시지/초 처리량
+```
+
+---
+
+### 🔗 **3. 통합 테스트 (Integration Tests)**
+
+#### **핵심 거래소 통합** (`ITExchangeCoreIntegration.java`)
+**검증하는 기능적 로직:**
+- **전체 거래 사이클**: 주문 → 매칭 → 체결 → 정산
+- **다중 사용자 상호작용**: 동시 거래자들의 복잡한 상호작용
+- **심볼 타입별 처리**: Margin vs Exchange 모드 차이점
+- **잔액 일관성**: 거래 전후 시스템 전체 잔액 보존
+
+**핵심 시나리오:**
+```java
+@Test basicFullCycleTestMargin()/basicFullCycleTestExchange()
+// 완전한 거래 사이클: Alice 주문 배치 → Bob 시장가 주문 → 부분 체결 → 주문 이동 → 추가 매칭
+
+@Test exchangeRiskBasicTest()  
+// 리스크 관리: 잔액 부족 시 주문 거부, 충분한 자금으로 주문 성공
+```
+
+#### **수수료 처리** (`ITFeesMargin.java`)
+**검증하는 기능적 로직:**
+- **Maker/Taker 수수료**: 유동성 제공자 vs 소비자 수수료 차별
+- **부분 체결 수수료**: 주문이 여러 번에 걸쳐 체결될 때 수수료 계산
+- **포지션 관리**: 매진/공매도 포지션에 따른 수수료 적용
+
+#### **스트레스 테스트** (`ITExchangeCoreIntegrationStress.java`)
+**검증하는 비기능적 로직:**
+- **대용량 처리**: 1M개 주문 동시 처리
+- **시스템 안정성**: 고부하 상황에서의 시스템 무결성
+- **최종 상태 일관성**: 모든 거래 완료 후 예상 상태와 실제 상태 일치
+
+---
+
+### 📋 **4. 행동 기반 테스트 (BDD/Cucumber)**
+
+#### **기본 거래 시나리오** (`basic.feature`)
+**검증하는 기능적 로직:**
+```gherkin
+Scenario: basic full cycle test
+Given Alice와 Bob이 각각 자금을 보유
+When Alice가 ASK 주문, BID 주문 배치
+Then 주문서에 정확히 반영
+When Bob이 IOC 주문으로 부분 매칭
+Then 거래 이벤트 발생, 주문서 업데이트
+When Alice가 주문 가격 이동으로 추가 매칭
+Then 완전 매칭, 최종 주문서 상태 확인
+```
+
+#### **리스크 관리 시나리오** (`risk.feature`)
+**검증하는 기능적 로직:**
+```gherkin
+Scenario: basic scenario - 잔액 부족으로 주문 거부
+Scenario: move orders UP and DOWN - 가격 이동 시 리스크 한도 검증
+```
+
+---
+
+### 🎯 **테스트가 보장하는 핵심 품질**
+
+#### **기능적 품질 (Functional Quality)**
+1. **거래 정확성**: 모든 거래가 정확한 가격과 수량으로 체결
+2. **주문서 무결성**: 실시간 주문서 상태의 정확성
+3. **잔액 일관성**: 시스템 전체 자금의 보존 법칙 준수
+4. **리스크 관리**: 사용자가 보유 자금을 초과하는 거래 방지
+
+#### **비기능적 품질 (Non-Functional Quality)**
+1. **초저지연**: 99.99% 거래에서 1ms 미만 응답
+2. **고처리량**: 초당 100만 건 이상 메시지 처리
+3. **확장성**: 수백만 사용자 동시 지원
+4. **안정성**: 고부하 상황에서도 시스템 무결성 유지
+
+이러한 포괄적인 테스트 구조를 통해 Exchange Core는 실제 금융 거래소에서 요구되는 극한의 성능과 신뢰성을 보장합니다.
+
 
